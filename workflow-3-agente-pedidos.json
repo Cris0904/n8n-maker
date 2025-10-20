@@ -1,0 +1,457 @@
+{
+  "name": "WhatsApp - Agente de Pedidos",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "pedidos-agent",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-pedidos",
+      "name": "Webhook Pedidos",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [250, 300],
+      "webhookId": "pedidos-agent-webhook"
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o",
+        "options": {
+          "temperature": 0.3,
+          "maxTokens": 500
+        }
+      },
+      "id": "chat-model-pedidos",
+      "name": "Chat Model - OpenAI",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": [690, 150]
+    },
+    {
+      "parameters": {
+        "sessionKey": "={{ $json.body.phoneNumber }}",
+        "contextWindowLength": 10
+      },
+      "id": "memory-pedidos",
+      "name": "Window Buffer Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.2,
+      "position": [690, 350]
+    },
+    {
+      "parameters": {
+        "name": "consultar_estado_pedido",
+        "description": "Consulta el estado actual de un pedido usando el número de orden. Devuelve información sobre el estado de procesamiento, envío y entrega.",
+        "workflowId": "={{ $parameter.workflowId }}",
+        "fields": {
+          "values": [
+            {
+              "name": "order_number",
+              "type": "string",
+              "description": "Número de orden del pedido"
+            }
+          ]
+        }
+      },
+      "id": "tool-estado-pedido",
+      "name": "Tool: Estado Pedido",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 1.1,
+      "position": [690, 550]
+    },
+    {
+      "parameters": {
+        "name": "rastrear_envio",
+        "description": "Obtiene información de tracking del envío. Proporciona número de guía, transportista, ubicación actual y fecha estimada de entrega.",
+        "workflowId": "={{ $parameter.workflowId }}",
+        "fields": {
+          "values": [
+            {
+              "name": "order_number",
+              "type": "string",
+              "description": "Número de orden del pedido"
+            }
+          ]
+        }
+      },
+      "id": "tool-rastrear-envio",
+      "name": "Tool: Rastrear Envío",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 1.1,
+      "position": [690, 750]
+    },
+    {
+      "parameters": {
+        "name": "buscar_pedidos_cliente",
+        "description": "Busca todos los pedidos asociados al número de teléfono o email del cliente. Útil cuando el cliente no recuerda su número de orden.",
+        "workflowId": "={{ $parameter.workflowId }}",
+        "fields": {
+          "values": [
+            {
+              "name": "phone_or_email",
+              "type": "string",
+              "description": "Teléfono o email del cliente"
+            }
+          ]
+        }
+      },
+      "id": "tool-buscar-pedidos",
+      "name": "Tool: Buscar Pedidos",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 1.1,
+      "position": [690, 950]
+    },
+    {
+      "parameters": {
+        "name": "iniciar_devolucion",
+        "description": "Inicia el proceso de devolución para un pedido. Requiere número de orden y motivo de la devolución.",
+        "workflowId": "={{ $parameter.workflowId }}",
+        "fields": {
+          "values": [
+            {
+              "name": "order_number",
+              "type": "string",
+              "description": "Número de orden del pedido"
+            },
+            {
+              "name": "reason",
+              "type": "string",
+              "description": "Motivo de la devolución"
+            }
+          ]
+        }
+      },
+      "id": "tool-devolucion",
+      "name": "Tool: Iniciar Devolución",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 1.1,
+      "position": [690, 1150]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ \"Eres un asistente especializado en seguimiento de pedidos y envíos. Tu trabajo es ayudar a los clientes a rastrear sus pedidos y resolver problemas relacionados con entregas.\\n\\nInstrucciones:\\n- Usa las herramientas disponibles para consultar estado de pedidos y tracking\\n- Si el cliente no tiene su número de orden, busca por teléfono o email\\n- Proporciona información clara sobre el estado actual y fecha estimada de entrega\\n- Si hay problemas con el pedido (retraso, daño, etc.), escala a soporte humano\\n- Para devoluciones complejas, escala a soporte humano\\n- Sé empático, especialmente si hay problemas con la entrega\\n\\nMensaje del cliente: \" + $json.body.message }}",
+        "hasOutputParser": true
+      },
+      "id": "ai-agent-pedidos",
+      "name": "AI Agent Pedidos",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.output }}",
+              "rightValue": "escalar",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            },
+            {
+              "leftValue": "={{ $json.output }}",
+              "rightValue": "problema",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            },
+            {
+              "leftValue": "={{ $json.output }}",
+              "rightValue": "no puedo",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "check-escalamiento-pedidos",
+      "name": "¿Necesita Escalamiento?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [910, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.whatsappApiUrl || \"https://graph.facebook.com/v18.0/YOUR_PHONE_ID/messages\" }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "whatsAppApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  \"messaging_product\": \"whatsapp\",\n  \"to\": $json.body.phoneNumber,\n  \"type\": \"text\",\n  \"text\": {\n    \"body\": $json.output\n  }\n} }}",
+        "options": {}
+      },
+      "id": "send-whatsapp-pedidos",
+      "name": "Enviar Respuesta WhatsApp",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1130, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:5678/webhook/escalamiento-agent",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "phoneNumber",
+              "value": "={{ $json.body.phoneNumber }}"
+            },
+            {
+              "name": "message",
+              "value": "={{ $json.body.message }}"
+            },
+            {
+              "name": "context",
+              "value": "={{ $json.body.context }}"
+            },
+            {
+              "name": "reason",
+              "value": "Problema con pedido - requiere atención humana"
+            },
+            {
+              "name": "agentResponse",
+              "value": "={{ $json.output }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "escalar-pedidos",
+      "name": "Escalar a Soporte",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1130, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"success\", \"agent\": \"pedidos\", \"response\": $json.output } }}"
+      },
+      "id": "respond-webhook-pedidos",
+      "name": "Responder Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1350, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.ORDERS_API_URL || \"http://localhost:3000/api/orders/\" + $json.order_number }}",
+        "options": {}
+      },
+      "id": "api-estado-pedido",
+      "name": "API: Consultar Estado",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [910, 550],
+      "notes": "Subworkflow para consultar_estado_pedido"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.ORDERS_API_URL || \"http://localhost:3000/api/orders/\" + $json.order_number + \"/tracking\" }}",
+        "options": {}
+      },
+      "id": "api-tracking",
+      "name": "API: Tracking",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [910, 750],
+      "notes": "Subworkflow para rastrear_envio"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.ORDERS_API_URL || \"http://localhost:3000/api/orders/search?customer=\" + $json.phone_or_email }}",
+        "options": {}
+      },
+      "id": "api-buscar-pedidos",
+      "name": "API: Buscar Pedidos Cliente",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [910, 950],
+      "notes": "Subworkflow para buscar_pedidos_cliente"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ORDERS_API_URL || \"http://localhost:3000/api/returns\" }}",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "order_number",
+              "value": "={{ $json.order_number }}"
+            },
+            {
+              "name": "reason",
+              "value": "={{ $json.reason }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "api-devolucion",
+      "name": "API: Crear Devolución",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [910, 1150],
+      "notes": "Subworkflow para iniciar_devolucion"
+    }
+  ],
+  "connections": {
+    "Webhook Pedidos": {
+      "main": [
+        [
+          {
+            "node": "AI Agent Pedidos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent Pedidos": {
+      "main": [
+        [
+          {
+            "node": "¿Necesita Escalamiento?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chat Model - OpenAI": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent Pedidos",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Window Buffer Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent Pedidos",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tool: Estado Pedido": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent Pedidos",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tool: Rastrear Envío": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent Pedidos",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tool: Buscar Pedidos": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent Pedidos",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tool: Iniciar Devolución": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent Pedidos",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Necesita Escalamiento?": {
+      "main": [
+        [
+          {
+            "node": "Enviar Respuesta WhatsApp",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Escalar a Soporte",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar Respuesta WhatsApp": {
+      "main": [
+        [
+          {
+            "node": "Responder Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Escalar a Soporte": {
+      "main": [
+        [
+          {
+            "node": "Responder Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2025-01-20T00:00:00.000Z",
+  "versionId": "1"
+}

@@ -1,0 +1,395 @@
+{
+  "name": "WhatsApp - Agente de Productos",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "productos-agent",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-productos",
+      "name": "Webhook Productos",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [250, 300],
+      "webhookId": "productos-agent-webhook"
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o",
+        "options": {
+          "temperature": 0.5,
+          "maxTokens": 500
+        }
+      },
+      "id": "chat-model-productos",
+      "name": "Chat Model - OpenAI",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": [690, 150]
+    },
+    {
+      "parameters": {
+        "sessionKey": "={{ $json.body.phoneNumber }}",
+        "contextWindowLength": 10
+      },
+      "id": "memory-productos",
+      "name": "Window Buffer Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.2,
+      "position": [690, 350]
+    },
+    {
+      "parameters": {
+        "name": "buscar_producto",
+        "description": "Busca información de productos en el catálogo. Puede buscar por nombre, categoría o características del producto.",
+        "workflowId": "={{ $parameter.workflowId }}",
+        "fields": {
+          "values": [
+            {
+              "name": "query",
+              "type": "string",
+              "description": "Término de búsqueda del producto"
+            }
+          ]
+        }
+      },
+      "id": "tool-buscar-producto",
+      "name": "Tool: Buscar Producto",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 1.1,
+      "position": [690, 550]
+    },
+    {
+      "parameters": {
+        "name": "consultar_stock",
+        "description": "Consulta la disponibilidad de stock de un producto específico usando su ID o SKU",
+        "workflowId": "={{ $parameter.workflowId }}",
+        "fields": {
+          "values": [
+            {
+              "name": "product_id",
+              "type": "string",
+              "description": "ID o SKU del producto"
+            }
+          ]
+        }
+      },
+      "id": "tool-consultar-stock",
+      "name": "Tool: Consultar Stock",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 1.1,
+      "position": [690, 750]
+    },
+    {
+      "parameters": {
+        "name": "obtener_precio",
+        "description": "Obtiene el precio actual de un producto, incluyendo descuentos y promociones activas",
+        "workflowId": "={{ $parameter.workflowId }}",
+        "fields": {
+          "values": [
+            {
+              "name": "product_id",
+              "type": "string",
+              "description": "ID o SKU del producto"
+            }
+          ]
+        }
+      },
+      "id": "tool-obtener-precio",
+      "name": "Tool: Obtener Precio",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 1.1,
+      "position": [690, 950]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ \"Eres un asistente experto en productos de e-commerce. Tu trabajo es ayudar a los clientes a encontrar productos, consultar disponibilidad y precios.\\n\\nInstrucciones:\\n- Usa las herramientas disponibles para buscar productos y obtener información actualizada\\n- Si un producto no está disponible, sugiere alternativas similares\\n- Proporciona información clara sobre precios, características y disponibilidad\\n- Si no puedes resolver la consulta, indica que se escalará a soporte\\n- Sé amable, profesional y conciso en tus respuestas\\n\\nMensaje del cliente: \" + $json.body.message }}",
+        "hasOutputParser": true
+      },
+      "id": "ai-agent-productos",
+      "name": "AI Agent Productos",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.output }}",
+              "rightValue": "escalar",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            },
+            {
+              "leftValue": "={{ $json.output }}",
+              "rightValue": "no puedo",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "check-escalamiento",
+      "name": "¿Necesita Escalamiento?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [910, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.whatsappApiUrl || \"https://graph.facebook.com/v18.0/YOUR_PHONE_ID/messages\" }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "whatsAppApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  \"messaging_product\": \"whatsapp\",\n  \"to\": $json.body.phoneNumber,\n  \"type\": \"text\",\n  \"text\": {\n    \"body\": $json.output\n  }\n} }}",
+        "options": {}
+      },
+      "id": "send-whatsapp-response",
+      "name": "Enviar Respuesta WhatsApp",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1130, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:5678/webhook/escalamiento-agent",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "phoneNumber",
+              "value": "={{ $json.body.phoneNumber }}"
+            },
+            {
+              "name": "message",
+              "value": "={{ $json.body.message }}"
+            },
+            {
+              "name": "context",
+              "value": "={{ $json.body.context }}"
+            },
+            {
+              "name": "reason",
+              "value": "El agente de productos no pudo resolver la consulta"
+            },
+            {
+              "name": "agentResponse",
+              "value": "={{ $json.output }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "escalar-a-soporte",
+      "name": "Escalar a Soporte",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1130, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"success\", \"agent\": \"productos\", \"response\": $json.output } }}"
+      },
+      "id": "respond-webhook-productos",
+      "name": "Responder Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1350, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.PRODUCTS_API_URL || \"http://localhost:3000/api/products/search\" }}",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "={{ $json.query }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "api-buscar-producto",
+      "name": "API: Buscar Producto",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [910, 550],
+      "notes": "Subworkflow para la herramienta buscar_producto"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.PRODUCTS_API_URL || \"http://localhost:3000/api/products/\" + $json.product_id + \"/stock\" }}",
+        "options": {}
+      },
+      "id": "api-consultar-stock",
+      "name": "API: Consultar Stock",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [910, 750],
+      "notes": "Subworkflow para la herramienta consultar_stock"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.PRODUCTS_API_URL || \"http://localhost:3000/api/products/\" + $json.product_id + \"/price\" }}",
+        "options": {}
+      },
+      "id": "api-obtener-precio",
+      "name": "API: Obtener Precio",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [910, 950],
+      "notes": "Subworkflow para la herramienta obtener_precio"
+    }
+  ],
+  "connections": {
+    "Webhook Productos": {
+      "main": [
+        [
+          {
+            "node": "AI Agent Productos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent Productos": {
+      "main": [
+        [
+          {
+            "node": "¿Necesita Escalamiento?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chat Model - OpenAI": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent Productos",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Window Buffer Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent Productos",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tool: Buscar Producto": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent Productos",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tool: Consultar Stock": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent Productos",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tool: Obtener Precio": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent Productos",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Necesita Escalamiento?": {
+      "main": [
+        [
+          {
+            "node": "Enviar Respuesta WhatsApp",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Escalar a Soporte",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar Respuesta WhatsApp": {
+      "main": [
+        [
+          {
+            "node": "Responder Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Escalar a Soporte": {
+      "main": [
+        [
+          {
+            "node": "Responder Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2025-01-20T00:00:00.000Z",
+  "versionId": "1"
+}
