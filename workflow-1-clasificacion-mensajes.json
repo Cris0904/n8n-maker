@@ -1,0 +1,455 @@
+{
+  "name": "WhatsApp - Clasificación de Mensajes",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "whatsapp-webhook",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-whatsapp",
+      "name": "Webhook WhatsApp",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [250, 300],
+      "webhookId": "whatsapp-incoming"
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={{ {\n  \"phoneNumber\": $json.body.from,\n  \"message\": $json.body.text,\n  \"timestamp\": $json.body.timestamp,\n  \"messageId\": $json.body.id\n} }}"
+      },
+      "id": "extract-message-data",
+      "name": "Extraer Datos del Mensaje",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "key": "={{ \"conversation:\" + $json.phoneNumber }}"
+      },
+      "id": "get-conversation-context",
+      "name": "Obtener Contexto de Conversación",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [690, 300]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o",
+        "options": {
+          "temperature": 0.3
+        }
+      },
+      "id": "chat-model-classifier",
+      "name": "Chat Model - OpenAI",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": [910, 150]
+    },
+    {
+      "parameters": {
+        "sessionKey": "={{ $json.phoneNumber }}",
+        "contextWindowLength": 10
+      },
+      "id": "memory-buffer",
+      "name": "Window Buffer Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.2,
+      "position": [910, 350]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ \"Eres un clasificador de mensajes para un sistema de atención al cliente de e-commerce. Analiza el mensaje del cliente y clasifícalo en una de estas categorías:\\n\\n- productos: Consultas sobre características, stock, precios, recomendaciones de productos\\n- pedidos: Seguimiento de pedidos, estado de envío, problemas con entregas, devoluciones\\n- soporte_complejo: Quejas, problemas técnicos, casos que requieren atención humana\\n- otro: Saludos, agradecimientos, consultas generales\\n\\nMensaje del cliente: \" + $json.message + \"\\n\\nResponde SOLO con una de estas palabras: productos, pedidos, soporte_complejo, otro\" }}",
+        "hasOutputParser": true
+      },
+      "id": "ai-agent-classifier",
+      "name": "AI Agent Clasificador",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [910, 300]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.output }}",
+                    "rightValue": "productos",
+                    "operator": {
+                      "type": "string",
+                      "operation": "contains"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "productos"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.output }}",
+                    "rightValue": "pedidos",
+                    "operator": {
+                      "type": "string",
+                      "operation": "contains"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "pedidos"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.output }}",
+                    "rightValue": "soporte_complejo",
+                    "operator": {
+                      "type": "string",
+                      "operation": "contains"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "soporte_complejo"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "switch-classification",
+      "name": "Switch por Clasificación",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [1130, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:5678/webhook/productos-agent",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "phoneNumber",
+              "value": "={{ $json.phoneNumber }}"
+            },
+            {
+              "name": "message",
+              "value": "={{ $json.message }}"
+            },
+            {
+              "name": "context",
+              "value": "={{ $json.context }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "call-productos-workflow",
+      "name": "Llamar Workflow Productos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1350, 100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:5678/webhook/pedidos-agent",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "phoneNumber",
+              "value": "={{ $json.phoneNumber }}"
+            },
+            {
+              "name": "message",
+              "value": "={{ $json.message }}"
+            },
+            {
+              "name": "context",
+              "value": "={{ $json.context }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "call-pedidos-workflow",
+      "name": "Llamar Workflow Pedidos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1350, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:5678/webhook/escalamiento-agent",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "phoneNumber",
+              "value": "={{ $json.phoneNumber }}"
+            },
+            {
+              "name": "message",
+              "value": "={{ $json.message }}"
+            },
+            {
+              "name": "context",
+              "value": "={{ $json.context }}"
+            },
+            {
+              "name": "reason",
+              "value": "Consulta clasificada como soporte complejo"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "call-escalamiento-workflow",
+      "name": "Llamar Workflow Escalamiento",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1350, 500]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.whatsappApiUrl || \"https://graph.facebook.com/v18.0/YOUR_PHONE_ID/messages\" }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "whatsAppApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  \"messaging_product\": \"whatsapp\",\n  \"to\": $json.phoneNumber,\n  \"type\": \"text\",\n  \"text\": {\n    \"body\": \"Hola, gracias por contactarnos. ¿En qué puedo ayudarte hoy?\"\n  }\n} }}",
+        "options": {}
+      },
+      "id": "send-whatsapp-generic",
+      "name": "Responder WhatsApp (Otro)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1350, 700]
+    },
+    {
+      "parameters": {
+        "operation": "set",
+        "key": "={{ \"conversation:\" + $json.phoneNumber }}",
+        "value": "={{ JSON.stringify($json) }}",
+        "expire": true,
+        "ttl": 3600
+      },
+      "id": "save-conversation-context",
+      "name": "Guardar Contexto",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [1570, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"success\", \"message\": \"Mensaje procesado\" } }}"
+      },
+      "id": "respond-to-webhook",
+      "name": "Responder Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1790, 300]
+    }
+  ],
+  "connections": {
+    "Webhook WhatsApp": {
+      "main": [
+        [
+          {
+            "node": "Extraer Datos del Mensaje",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraer Datos del Mensaje": {
+      "main": [
+        [
+          {
+            "node": "Obtener Contexto de Conversación",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Obtener Contexto de Conversación": {
+      "main": [
+        [
+          {
+            "node": "AI Agent Clasificador",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent Clasificador": {
+      "main": [
+        [
+          {
+            "node": "Switch por Clasificación",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chat Model - OpenAI": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent Clasificador",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Window Buffer Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent Clasificador",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch por Clasificación": {
+      "main": [
+        [
+          {
+            "node": "Llamar Workflow Productos",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Llamar Workflow Pedidos",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Llamar Workflow Escalamiento",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder WhatsApp (Otro)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Llamar Workflow Productos": {
+      "main": [
+        [
+          {
+            "node": "Guardar Contexto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Llamar Workflow Pedidos": {
+      "main": [
+        [
+          {
+            "node": "Guardar Contexto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Llamar Workflow Escalamiento": {
+      "main": [
+        [
+          {
+            "node": "Guardar Contexto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Responder WhatsApp (Otro)": {
+      "main": [
+        [
+          {
+            "node": "Guardar Contexto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardar Contexto": {
+      "main": [
+        [
+          {
+            "node": "Responder Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2025-01-20T00:00:00.000Z",
+  "versionId": "1"
+}

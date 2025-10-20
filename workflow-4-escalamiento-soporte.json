@@ -1,0 +1,390 @@
+{
+  "name": "WhatsApp - Escalamiento a Soporte Humano",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "escalamiento-agent",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-escalamiento",
+      "name": "Webhook Escalamiento",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [250, 400],
+      "webhookId": "escalamiento-agent-webhook"
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={{ {\n  \"ticketId\": \"TICKET-\" + Date.now(),\n  \"phoneNumber\": $json.body.phoneNumber,\n  \"customerMessage\": $json.body.message,\n  \"context\": $json.body.context,\n  \"reason\": $json.body.reason,\n  \"agentResponse\": $json.body.agentResponse || \"N/A\",\n  \"timestamp\": new Date().toISOString(),\n  \"status\": \"pending\",\n  \"priority\": \"normal\"\n} }}"
+      },
+      "id": "crear-ticket-data",
+      "name": "Crear Datos de Ticket",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [470, 400]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO support_tickets (ticket_id, phone_number, customer_message, context, reason, agent_response, timestamp, status, priority) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *",
+        "additionalFields": {
+          "queryParameters": {
+            "parameters": [
+              {
+                "parameter": "={{ $json.ticketId }}"
+              },
+              {
+                "parameter": "={{ $json.phoneNumber }}"
+              },
+              {
+                "parameter": "={{ $json.customerMessage }}"
+              },
+              {
+                "parameter": "={{ JSON.stringify($json.context) }}"
+              },
+              {
+                "parameter": "={{ $json.reason }}"
+              },
+              {
+                "parameter": "={{ $json.agentResponse }}"
+              },
+              {
+                "parameter": "={{ $json.timestamp }}"
+              },
+              {
+                "parameter": "={{ $json.status }}"
+              },
+              {
+                "parameter": "={{ $json.priority }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "guardar-ticket-db",
+      "name": "Guardar Ticket en BD",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [690, 400]
+    },
+    {
+      "parameters": {
+        "resource": "channel",
+        "operation": "message",
+        "channelId": {
+          "__rl": true,
+          "value": "={{ $env.SLACK_CHANNEL_ID || \"C12345678\" }}",
+          "mode": "id"
+        },
+        "text": "={{ \"🆘 *Nuevo Ticket de Soporte*\\n\\n\" +\n  \"*Ticket ID:* \" + $json.ticketId + \"\\n\" +\n  \"*Cliente:* \" + $json.phoneNumber + \"\\n\" +\n  \"*Razón:* \" + $json.reason + \"\\n\" +\n  \"*Mensaje:* \" + $json.customerMessage + \"\\n\\n\" +\n  \"_Timestamp: \" + $json.timestamp + \"_\" }}",
+        "attachments": [],
+        "blocksUi": {
+          "blocksValues": []
+        },
+        "otherOptions": {}
+      },
+      "id": "notificar-slack",
+      "name": "Notificar por Slack",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [910, 250]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $env.SUPPORT_EMAIL || \"support@empresa.com\" }}",
+        "subject": "={{ \"Nuevo Ticket de Soporte: \" + $json.ticketId }}",
+        "message": "={{ \"<!DOCTYPE html>\\n<html>\\n<head>\\n  <style>\\n    body { font-family: Arial, sans-serif; }\\n    .ticket-info { background: #f5f5f5; padding: 15px; border-radius: 5px; }\\n    .label { font-weight: bold; }\\n  </style>\\n</head>\\n<body>\\n  <h2>Nuevo Ticket de Soporte Escalado</h2>\\n  <div class='ticket-info'>\\n    <p><span class='label'>Ticket ID:</span> \" + $json.ticketId + \"</p>\\n    <p><span class='label'>Cliente:</span> \" + $json.phoneNumber + \"</p>\\n    <p><span class='label'>Razón de Escalamiento:</span> \" + $json.reason + \"</p>\\n    <p><span class='label'>Mensaje del Cliente:</span><br>\" + $json.customerMessage + \"</p>\\n    <p><span class='label'>Respuesta del Agente IA:</span><br>\" + $json.agentResponse + \"</p>\\n    <p><span class='label'>Timestamp:</span> \" + $json.timestamp + \"</p>\\n  </div>\\n  <p>Por favor, atiende este caso lo antes posible.</p>\\n</body>\\n</html>\" }}",
+        "options": {
+          "allowUnauthorizedCerts": false,
+          "ccList": "",
+          "bccList": ""
+        }
+      },
+      "id": "enviar-email",
+      "name": "Enviar Email a Soporte",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [910, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.whatsappApiUrl || \"https://graph.facebook.com/v18.0/YOUR_PHONE_ID/messages\" }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "whatsAppApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  \"messaging_product\": \"whatsapp\",\n  \"to\": $json.phoneNumber,\n  \"type\": \"text\",\n  \"text\": {\n    \"body\": \"Gracias por contactarnos. He escalado tu consulta a nuestro equipo de soporte especializado. Un agente humano se pondrá en contacto contigo muy pronto.\\n\\nNúmero de ticket: \" + $json.ticketId + \"\\n\\nTiempo estimado de respuesta: 2-4 horas.\"\n  }\n} }}",
+        "options": {}
+      },
+      "id": "notificar-cliente-whatsapp",
+      "name": "Notificar Cliente por WhatsApp",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [910, 550]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.reason }}",
+              "rightValue": "urgente",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            },
+            {
+              "leftValue": "={{ $json.reason }}",
+              "rightValue": "queja",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            },
+            {
+              "leftValue": "={{ $json.customerMessage }}",
+              "rightValue": "urgente",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "check-urgente",
+      "name": "¿Es Urgente?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1130, 400]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE support_tickets SET priority = 'high' WHERE ticket_id = $1",
+        "additionalFields": {
+          "queryParameters": {
+            "parameters": [
+              {
+                "parameter": "={{ $json.ticketId }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "marcar-urgente",
+      "name": "Marcar como Urgente",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1350, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "channel",
+        "operation": "message",
+        "channelId": {
+          "__rl": true,
+          "value": "={{ $env.SLACK_URGENT_CHANNEL_ID || \"C87654321\" }}",
+          "mode": "id"
+        },
+        "text": "={{ \"🚨 *TICKET URGENTE* 🚨\\n\\n\" +\n  \"*Ticket ID:* \" + $json.ticketId + \"\\n\" +\n  \"*Cliente:* \" + $json.phoneNumber + \"\\n\" +\n  \"*Requiere atención inmediata*\" }}",
+        "attachments": [],
+        "blocksUi": {
+          "blocksValues": []
+        },
+        "otherOptions": {}
+      },
+      "id": "alerta-urgente-slack",
+      "name": "Alerta Urgente Slack",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [1350, 500]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \n  \"status\": \"escalated\", \n  \"ticketId\": $json.ticketId,\n  \"message\": \"Caso escalado exitosamente a soporte humano\"\n} }}"
+      },
+      "id": "respond-webhook-escalamiento",
+      "name": "Responder Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1570, 400]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO escalation_log (ticket_id, action, timestamp) VALUES ($1, $2, $3)",
+        "additionalFields": {
+          "queryParameters": {
+            "parameters": [
+              {
+                "parameter": "={{ $json.ticketId }}"
+              },
+              {
+                "parameter": "ticket_created"
+              },
+              {
+                "parameter": "={{ new Date().toISOString() }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "log-escalamiento",
+      "name": "Registrar Log de Escalamiento",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [690, 600]
+    }
+  ],
+  "connections": {
+    "Webhook Escalamiento": {
+      "main": [
+        [
+          {
+            "node": "Crear Datos de Ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Crear Datos de Ticket": {
+      "main": [
+        [
+          {
+            "node": "Guardar Ticket en BD",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardar Ticket en BD": {
+      "main": [
+        [
+          {
+            "node": "Notificar por Slack",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Enviar Email a Soporte",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Notificar Cliente por WhatsApp",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Registrar Log de Escalamiento",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notificar por Slack": {
+      "main": [
+        [
+          {
+            "node": "¿Es Urgente?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar Email a Soporte": {
+      "main": [
+        [
+          {
+            "node": "¿Es Urgente?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notificar Cliente por WhatsApp": {
+      "main": [
+        [
+          {
+            "node": "¿Es Urgente?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Es Urgente?": {
+      "main": [
+        [
+          {
+            "node": "Marcar como Urgente",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Alerta Urgente Slack",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Marcar como Urgente": {
+      "main": [
+        [
+          {
+            "node": "Responder Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alerta Urgente Slack": {
+      "main": [
+        [
+          {
+            "node": "Responder Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2025-01-20T00:00:00.000Z",
+  "versionId": "1"
+}
